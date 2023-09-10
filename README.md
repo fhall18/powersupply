@@ -1,2 +1,2 @@
 # powersupply
-bunch of models, code and analysis relating to energy and supporting the powersupply blog.
+bunch of models, code and analysis relating to how we use energy in our lives and supporting the powersupply blog.
