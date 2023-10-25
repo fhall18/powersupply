@@ -41,6 +41,13 @@ import numpy as np
 from model import format_loadshapes
 
 app = Dash(__name__)
+app.css.append_css({'external_url': 'reset.css'})
+
+###
+colors = {
+    'background': '#111111',
+    'text': '#7FDBFF'
+}
 
 # PROCESS DATA
 df = pd.read_csv('https://raw.githubusercontent.com/fhall18/powersupply/main/data/loadshape_finished.csv')
@@ -50,6 +57,7 @@ df_disaggregated.end_use = df_disaggregated.end_use.apply(lambda x: x.replace('_
 app.layout = html.Div([
 
     html.H1(children='Load Shape Extravaganza', style={'textAlign':'center','color':"#2AAA8A"}),
+    html.H4(children='Developed by Freddie Hall', style={'textAlign':'center','color':"#FF4D00"}),
     html.Hr(),
 
     html.Div([
@@ -70,7 +78,7 @@ app.layout = html.Div([
             min=.05,
             max=.4,
             step=.005,
-            value=0.16
+            value=0.14
             )],style={'width': '15%','float': 'center', 'display': 'inline-block'}),
 
         html.Div([
@@ -78,8 +86,8 @@ app.layout = html.Div([
             dcc.Input(
             id="peak--rate",
             type="number",
-            min=.2,
-            max=.5,
+            min=.18,
+            max=.6,
             step=.005,
             value=0.2
             )],style={'width': '15%','float': 'center', 'display': 'inline-block'}),
@@ -105,7 +113,7 @@ app.layout = html.Div([
 
         html.Div([
             html.H4(children='Solar Capacity (kW-AC)', style={'textAlign':'left'}),
-            dcc.Slider(4,10,step=1,id='solar--input',value=6,)
+            dcc.Slider(4,10,step=1,id='solar--input',value=7,)
             ],style={'width': '48%', 'float': 'right', 'display': 'inline-block'}),
     ]),
 
@@ -127,7 +135,7 @@ app.layout = html.Div([
         # html.H1("Results from TOU Rate:"),
         # html.Br(),
         html.Div(id='result')
-    ],style={"color": "#2AAA8A",'font-size': '22px','textAlign':'center'}),
+    ],style={"color": "#2AAA8A",'font-size': '22px','textAlign':'left'}),
 
     html.Hr(),
 
@@ -135,12 +143,42 @@ app.layout = html.Div([
     html.Div([
         dcc.Graph(
             id='graph-content',
+                    figure={
+            'layout': {
+                'plot_bgcolor': colors['background'],
+                'paper_bgcolor': colors['background'],
+                'font': {
+                    'color': colors['text']}
+                }
+            }
             # hoverData={'points': [{'customdata': 'Japan'}]}
         )
     ], style={'width': '49%', 'display': 'inline-block', 'padding': '0 20'}),
     html.Div([
-        dcc.Graph(id='peak-bar'),
-        dcc.Graph(id='bubble-graph'),
+        dcc.Graph(
+            id='bubble-graph',
+            figure={
+                'layout': {
+                    'plot_bgcolor': colors['background'],
+                    'paper_bgcolor': colors['background'],
+                    'font': {
+                        'color': colors['text']
+                        }
+                    }
+                }
+            ),
+        dcc.Graph(
+            id='peak-bar',
+            figure={
+                'layout': {
+                    'plot_bgcolor': colors['background'],
+                    'paper_bgcolor': colors['background'],
+                    'font': {
+                        'color': colors['text']
+                        }
+                    }
+                }
+        ),
     ], style={'display': 'inline-block', 'width': '49%'}),
 
 ])
@@ -178,7 +216,7 @@ def update_result(flat, peak, off,load,base,solar,miles,peakHours):
     peak_kwh = sum(df1[df1.peak == 'On-Peak'].energy)
     off_peak_kwh = sum(df1[df1.peak == 'Off-Peak'].energy)
     total_kwh = sum(df1.energy)
-    total_kwh_no_pv = sum(dff[dff.end_use != 'solar'].energy)
+    total_kwh_no_pv = sum(dff[~dff.end_use.isin(['solar','everything'])].energy)
 
     tou_cost = peak_kwh * peak + off_peak_kwh * off
     flat_cost = total_kwh * flat
@@ -263,7 +301,7 @@ def update_bubble_graph(load,base,solar,miles,peakHours):
 
     fig = px.scatter(df_agg_pivot, x='total',y='on-peak',
                  size="peak_ratio", color="category", hover_name="end_use",
-                 log_x=True, log_y=True, size_max=13)
+                 log_x=True, log_y=False, size_max=13)
     fig.update_layout(height=225, margin={'l': 20, 'b': 30, 'r': 10, 't': 10})
     fig.update_xaxes(title="Total Energy")
     fig.update_yaxes(title="Peak Energy")
@@ -303,4 +341,3 @@ def update_peak_bar(load,base,solar,miles,peakHours):
     fig.update_xaxes(title="")
 
     return fig
-
