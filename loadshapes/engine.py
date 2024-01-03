@@ -40,14 +40,21 @@ class Rate:
             totalSolar = sum(self.loadshape[self.loadshape.type == 'pv'].energy)
             self.loadshape.energy = self.loadshape.apply(lambda row: row['energy']/totalSolar * (-solarAdj *  1000)  if row['type'] == 'pv' else row['energy'], axis=1)
         if 'ev' in loadType:
+            no_charging = np.arange(ev_slider[0],ev_slider[1]+1)
+            # pull in loadshape from rates.loadshapes
+            ev_t = self.loadshapeData[(self.loadshapeData.type.isin(['ev'])) & (self.loadshapeData.climate == climate)]
+            # adjust based on that profile for EVs
+            ev_t.energy = ev_t.apply(lambda row: 0 if row['hour'] in no_charging else row['energy'], axis=1)
 
-            # self.loadshape.energy = self.loadshape.apply(lambda row: 0 if (row['type'] == 'ev') & (row['hour'].isin(ev_slider)) else row['energy'], axis=1)
-            
-            totalEV = sum(self.loadshape[self.loadshape.type == 'ev'].energy)
-            self.loadshape.energy = self.loadshape.apply(lambda row: row['energy']/totalEV * (evAdj*.3)  if row['type'] == 'ev' else row['energy'], axis=1)
+            # ADJUSTMENT
+            totalEV = sum(ev_t.energy)
+            ev_t.energy = ev_t.energy/totalEV * (evAdj*.3)
+
+            # join back in to loadshape
+            self.loadshape.update(ev_t)
 
 
-    def rateInfo(self,selection):
+    def rateInfo(self,selection,nm_value):
         ''' This takes in a selected rate and spits out a rate schedule: value, period, tier and tier_kwh'''
         self.rateName = selection
 
@@ -95,7 +102,7 @@ class Rate:
 
         j2['tier_excess'] = abs(j2.energy) - j2.tier_cum + j2.tier_kwh
         j2['tier_actual_kwh'] = j2.apply(lambda x: x.tier_kwh if x.tier_excess >= x.tier_kwh else x.tier_excess, axis=1)
-        j2['cost'] = j2.apply(lambda x: x.tier_actual_kwh * -.15 if x.energy < 0 else x.tier_actual_kwh * x.value,axis=1)
+        j2['cost'] = j2.apply(lambda x: x.tier_actual_kwh * -nm_value if x.energy < 0 else x.tier_actual_kwh * x.value,axis=1)
 
         j3 = j2[j2.tier_actual_kwh > 0].reset_index(drop=True)
         j3['rateName'] = self.rateName
