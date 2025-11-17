@@ -1,0 +1,163 @@
+import json
+import time
+import requests
+import pandas as pd
+import numpy as np
+from datetime import timedelta, datetime
+
+import os
+from dotenv import load_dotenv
+
+# Load Strava credentials from your .env file in the root directory
+load_dotenv()
+client_id = os.getenv('STRAVA_CLIENT_ID')
+client_secret = os.getenv('STRAVA_CLIENT_SECRET')
+
+
+class StravaAPIConnector:
+    def __init__(self):
+
+        self.meters_2_miles = 0.000621371
+        self.meters_2_feet = 3.28084
+
+        # Get the tokens from file to connect to Strava
+        with open('data/strava_tokens.json') as json_file:
+            strava_tokens = json.load(json_file)
+
+        if strava_tokens['expires_at'] < time.time():
+
+            response = requests.post(
+                url='https://www.strava.com/oauth/token',
+                data={
+                    'client_id': f'{client_id}',
+                    'client_secret': f'{client_secret}',
+                    'grant_type': 'refresh_token',
+                    'refresh_token': strava_tokens['refresh_token']
+                }
+            )
+
+            # Save response as json in new variable
+            new_strava_tokens = response.json()
+            # Save new tokens to file
+            with open('data/strava_tokens.json', 'w') as outfile:
+                json.dump(new_strava_tokens, outfile)
+            # Use new Strava tokens from now
+            strava_tokens = new_strava_tokens
+
+        else:
+            print('token still fresh')
+
+        self.strava_tokens = strava_tokens
+    
+
+    def r_to_df(self, r: dict) -> pd.DataFrame:
+        """ Convert Strava JSON data to pandas DataFrame """
+        r = r.json()
+        return pd.json_normalize(r)
+    
+
+    def get_period_activities(self, start_date: datetime, end_date: datetime) -> pd.DataFrame:
+        """ Get Strava activities with meta data for select period of time"""
+
+        headers = {'Authorization': f'Bearer {self.strava_tokens["access_token"]}'}
+
+        # Convert dates to timestamps
+        start_timestamp = int(datetime.fromisoformat(start_date).timestamp())
+        end_timestamp = int(datetime.fromisoformat(end_date).timestamp())
+
+        params = {
+            'after': start_timestamp,
+            'before': end_timestamp,
+            'per_page': 200
+        }
+
+        url = "https://www.strava.com/api/v3/athlete/activities"
+        r = requests.get(url, headers=headers, params=params)
+
+        if r.status_code == 200:
+            df = self.r_to_df(self, r)
+            return df
+
+        else:
+            print(f"Error: {r.status_code} - {r.text}")
+            return None
+
+    def get_latest_activities(self) -> pd.DataFrame:
+        """ Get latest Strava activities with meta data """
+
+        url = "https://www.strava.com/api/v3/activities"
+
+        # Get first page of activities from Strava with all fields
+        r = requests.get(url + '?access_token=' + self.strava_tokens['access_token'])
+        df = self.r_to_df(self, r)
+
+        return df
+    
+    def get_activity_info(self, activity_ids: list) -> pd.DataFrame:
+        """ Access more information on a given activity """
+
+        activities_df_list = []
+        for id in activity_ids:
+            url = f"https://www.strava.com/api/v3/activities/{id}"
+            # Get first page of activities from Strava with all fields
+            r = requests.get(url + '?access_token=' + self.strava_tokens['access_token'])
+            
+            df = self.r_to_df(self, r)
+            adf_ = self.clean_activity_info(df,id)
+            activities_df_list.append(adf_)
+
+        activity_df = pd.concat(activities_df_list, ignore_index=True)
+
+        return activity_df
+    
+    def get_altitude_stream(self, activity_id: str, stream_types=['altitude', 'distance','time']) -> pd.DataFrame:
+        
+        url = f"https://www.strava.com/api/v3/activities/{activity_id}/streams"
+        headers = {'Authorization': f'Bearer {self.strava_tokens["access_token"]}'}
+        params = {
+            'keys': ','.join(stream_types),
+            'key_by_type': 'true'
+        }
+
+        # Get first page of activities from Strava with all fields
+        r = requests.get(url + '?access_token=', headers=headers, params=params)
+        df = self.r_to_df(self, r)
+
+        return df
+    
+    def get_altitude_info(self, activity_ids: list) -> pd.DataFrame:
+
+        altitude_df_list = []
+        for id in activity_ids:
+            df = self.get_altitude_stream(id, stream_types=['altitude', 'distance','time'])
+            altitude_df_list.append(df)
+
+        altitude_df = pd.concat(altitude_df_list, ignore_index=True)
+
+        return altitude_df
+
+    def clean_activity_info(self, df_raw: pd.DataFrame, activity_id: str) -> pd.DataFrame:
+
+        activity_start = df_raw.start_date[0]
+        activity_timezone = df_raw.timezone[0].split(' ')[1]
+        splits_df = pd.DataFrame(df_raw.splits_metric[0])
+
+        df_splits = (
+            splits_df
+            .assign(
+                strava_id=activity_id,
+                start_datetime=activity_start,
+                mi=lambda df: df.distance * self.meters_2_miles,
+                elapsed_hours=lambda df: df.moving_time / 3600,
+                elevation_ft=lambda df: df.elevation_difference * self.meters_2_feet,
+                mph=lambda df: df.mi / df.elapsed_hours,
+                distance_traveled_mi=lambda df: df.mi.cumsum(),
+                cumulative_elapsed_hours=lambda df: df.elapsed_hours.cumsum(),
+                interval_time_utc=lambda df: df.cumulative_elapsed_hours.apply(
+                    lambda x: pd.to_datetime(activity_start) + timedelta(hours=x)),
+                interval_time_local=lambda df: df.interval_time_utc.dt.tz_convert(activity_timezone),
+                stop_time=lambda df: np.where(df.mph < 3, True, False)
+            )
+        )
+
+        return df_splits
